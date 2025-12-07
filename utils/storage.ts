@@ -12,7 +12,7 @@ const KEYS = {
 const DEFAULT_SETTINGS: Settings = {
   // No pre-configured API Key. User must provide their own.
   apiKey: '', 
-  // Set default Base URL to user's New API proxy
+  // Set default Base URL to user's New API proxy (LOCKED)
   baseUrl: 'https://api.xxapi.xyz', 
   // Default text model as requested
   textModel: 'gemini-2.5-pro', 
@@ -86,13 +86,13 @@ export const storage = {
         localSettings.apiKey = (localSettings as any).apiKeys[0];
     }
 
-    // Ensure strict defaults if missing
-    if (!localSettings.baseUrl) localSettings.baseUrl = DEFAULT_SETTINGS.baseUrl;
-    
     // Clean up old field if exists (optional but cleaner)
     if ('apiKeys' in localSettings) {
         delete (localSettings as any).apiKeys;
     }
+
+    // FORCE LOCKED BASE URL
+    localSettings.baseUrl = 'https://api.xxapi.xyz';
 
     return { ...DEFAULT_SETTINGS, ...localSettings };
   },
@@ -102,7 +102,9 @@ export const storage = {
   },
 
   saveSettings: async (settings: Settings) => {
-    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+    // FORCE LOCKED BASE URL BEFORE SAVE
+    const lockedSettings = { ...settings, baseUrl: 'https://api.xxapi.xyz' };
+    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(lockedSettings));
   },
 
   // --- Auth ---

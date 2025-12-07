@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { GenerationModel, Settings, Character } from "../types";
+import { GenerationModel, Settings, Character, TEXT_MODELS } from "../types";
 
 // Helper to clean Base URL for New API / One API compatibility
 const cleanBaseUrl = (url?: string): string | undefined => {
@@ -45,7 +45,7 @@ const cleanApiKey = (key: string): string => {
 const formatError = (error: any, context: string): string => {
   let msg = error instanceof Error ? error.message : String(error);
   
-  if (msg.includes('400')) msg = '请求无效 (400) - 可能是该代理地址不支持当前模型(如2.5系列)，请尝试切换模型';
+  if (msg.includes('400')) msg = '请求无效 (400) - 可能是该代理地址不支持当前模型，系统已自动尝试其他模型但均失败';
   else if (msg.includes('401')) msg = 'API Key 无效或未授权 (401) - 请检查余额或 Key 是否正确';
   else if (msg.includes('403')) msg = 'API Key 权限不足 (403)';
   else if (msg.includes('404')) msg = '地址错误 (404) - 代理地址路径不匹配 (SDK会自动追加 /v1beta)';
@@ -128,9 +128,11 @@ const executeGeminiCall = async <T>(
 };
 
 /**
- * Test API Connection (Single Key + URL)
+ * Test API Connection with Auto-Fallback Logic
+ * Iterates through available TEXT_MODELS until one succeeds.
+ * Returns the name of the working model.
  */
-export const testApiConnection = async (apiKey: string, baseUrl: string, model: string = 'gemini-1.5-flash'): Promise<boolean> => {
+export const testApiConnection = async (apiKey: string, baseUrl: string): Promise<string> => {
   const cleanKey = cleanApiKey(apiKey);
   const cleanUrl = cleanBaseUrl(baseUrl);
   
@@ -142,18 +144,33 @@ export const testApiConnection = async (apiKey: string, baseUrl: string, model: 
   }
   
   const ai = new GoogleGenAI(clientOptions);
+
+  // Define fallback priority based on the updated model list
+  // We try models in the order they appear in TEXT_MODELS
+  const modelsToTry = TEXT_MODELS.map(m => m.value);
   
-  try {
-      await ai.models.generateContent({
-        model: model,
-        contents: { parts: [{ text: 'Ping' }] }
-      });
-      return true;
-  } catch (error) {
-      console.error("Connection Test Error:", error);
-      const msg = formatError(error, "连接测试失败");
-      throw new Error(msg);
+  let lastError: any = null;
+
+  for (const modelName of modelsToTry) {
+      try {
+          console.log(`Testing connection with model: ${modelName}...`);
+          await ai.models.generateContent({
+            model: modelName,
+            contents: { parts: [{ text: 'Ping' }] }
+          });
+          console.log(`Connection successful with ${modelName}`);
+          return modelName; // Success! Return the model name that worked.
+      } catch (error) {
+          console.warn(`Failed to connect using ${modelName}:`, error);
+          lastError = error;
+          // Continue to next model...
+      }
   }
+  
+  // If loop finishes without returning, all models failed.
+  console.error("All connection tests failed.");
+  const msg = formatError(lastError, "所有模型连接测试均失败");
+  throw new Error(msg);
 };
 
 /**

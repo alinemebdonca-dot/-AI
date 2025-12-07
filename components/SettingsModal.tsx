@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, GenerationModel, TEXT_MODELS } from '../types';
 import { Button } from './Button';
-import { X, Save, Palette, Key, Check, AlertTriangle, Loader2, Globe, ShoppingBag, ExternalLink } from 'lucide-react';
+import { X, Save, Palette, Key, Check, AlertTriangle, Loader2, Globe, ShoppingBag, ExternalLink, Lock } from 'lucide-react';
 import { storage } from '../utils/storage';
 import { testApiConnection } from '../services/geminiService';
 
@@ -20,6 +20,8 @@ const THEME_COLORS = [
   { name: '极光绿', value: '#10b981' },
   { name: '未来青', value: '#06b6d4' },
 ];
+
+const LOCKED_BASE_URL = 'https://api.xxapi.xyz';
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onSave, showToast }) => {
   const [localSettings, setLocalSettings] = useState<Settings>(storage.getSettings());
@@ -40,16 +42,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
         showToast("警告：未配置 API Key，功能将无法使用", "info");
     }
 
-    // Ensure BaseURL is correct if user cleared it
-    let finalBaseUrl = localSettings.baseUrl?.trim().replace(/\/+$/, '');
-    if (!finalBaseUrl) {
-        finalBaseUrl = 'https://api.xxapi.xyz';
-    }
-
     const cleanedSettings = {
         ...localSettings,
         apiKey: finalKey,
-        baseUrl: finalBaseUrl
+        baseUrl: LOCKED_BASE_URL // Force locked URL
     };
 
     storage.saveSettings(cleanedSettings);
@@ -60,17 +56,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
   const handleTestKey = async () => {
     setTesting(true);
     // Sanitize before testing
-    const cleanUrl = localSettings.baseUrl?.trim().replace(/\/+$/, '') || 'https://api.xxapi.xyz';
+    const cleanUrl = LOCKED_BASE_URL;
     const cleanKey = localSettings.apiKey.trim().replace(/[\s\uFEFF\xA0]+/g, '');
     
-    // FORCE USE a model from the allowed list for testing connectivity.
-    // gemini-2.5-flash is fast, cheap, and in the user's allowed list.
-    const modelToTest = 'gemini-2.5-flash';
-
     try {
-        await testApiConnection(cleanKey, cleanUrl, modelToTest);
+        // Auto-test: tries all available models until one works
+        const workingModel = await testApiConnection(cleanKey, cleanUrl);
         setKeyStatus('valid');
-        showToast(`连接成功 (使用 ${modelToTest} 测试)`, "success");
+        showToast(`连接成功 (检测到可用模型: ${workingModel})`, "success");
     } catch (e: any) {
         setKeyStatus('invalid');
         showToast(`测试失败: ${e.message}`, "error");
@@ -80,8 +73,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
   };
 
   const handleGoToRecharge = () => {
-      const url = localSettings.baseUrl || 'https://api.xxapi.xyz';
-      window.open(url, '_blank');
+      window.open(LOCKED_BASE_URL, '_blank');
   };
 
   if (!isOpen) return null;
@@ -102,26 +94,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
                 <Key size={18} className="text-[var(--brand-color)]" /> API 连接配置
             </h4>
 
-            {/* Base URL Input */}
+            {/* Base URL Input (LOCKED) */}
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
                     <Globe size={14} />
-                    API 接口地址
+                    API 接口地址 
+                    <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded ml-2 flex items-center gap-1 font-normal border border-gray-200">
+                        <Lock size={10}/> 已锁定
+                    </span>
                 </label>
-                <input 
-                    type="text" 
-                    value={localSettings.baseUrl}
-                    onChange={e => setLocalSettings({...localSettings, baseUrl: e.target.value})}
-                    onBlur={() => {
-                        let url = localSettings.baseUrl.trim();
-                        if (!url) url = 'https://api.xxapi.xyz'; // Restore default if empty
-                        setLocalSettings(prev => ({...prev, baseUrl: url}));
-                    }}
-                    placeholder="https://api.xxapi.xyz"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--brand-color)] outline-none text-sm font-mono transition-colors"
-                />
+                <div className="relative">
+                    <input 
+                        type="text" 
+                        value={LOCKED_BASE_URL}
+                        disabled
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 font-mono text-sm cursor-not-allowed select-none focus:outline-none"
+                    />
+                </div>
                 <p className="text-[10px] text-gray-400 mt-1">
-                    系统默认使用接口：<b>https://api.xxapi.xyz</b>，您也可以配置其他兼容 OpenAI/Gemini 格式的代理地址。
+                    系统内置专属高速通道：<b>{LOCKED_BASE_URL}</b> (不可修改)
                 </p>
             </div>
             
@@ -164,11 +156,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
                         variant="secondary" 
                         className="whitespace-nowrap"
                      >
-                         {testing ? <Loader2 size={16} className="animate-spin mr-1"/> : "测试连接"}
+                         {testing ? <Loader2 size={16} className="animate-spin mr-1"/> : "测试连接 (自动寻优)"}
                      </Button>
                  </div>
                  <p className="text-[10px] text-gray-400">
-                     请确保您的 Key 有足够的余额。如果连接失败，请检查接口地址和 Key 是否匹配。
+                     请确保您的 Key 有足够的余额。系统将自动尝试连接列表中的所有模型，直到成功。
                  </p>
 
                  {/* Big Recharge Button */}
