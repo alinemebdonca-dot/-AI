@@ -1,0 +1,7 @@
+{
+  "name": "香蕉 AI",
+  "description": "A professional AI storyboard and character consistency tool using Gemini NanoBanana models.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
