@@ -11,8 +11,13 @@ const cleanBaseUrl = (url?: string): string | undefined => {
     // 1. Remove trailing slashes
     cleaned = cleaned.replace(/\/+$/, '');
     
-    // 2. Remove version suffixes often pasted by mistake (SDK adds these automatically)
-    // Many New API users might paste "https://api.com/v1", but SDK wants "https://api.com"
+    // 2. Handle version suffixes
+    // The Google GenAI SDK automatically appends '/v1beta' (or similar version).
+    // Common issue: User pastes OpenAI compatible endpoint like "https://api.xyz/v1".
+    // If we keep "/v1", SDK makes "https://api.xyz/v1/v1beta", which 404s on many OneAPI/NewAPI sites.
+    // These sites usually mount Google API at the root or /google/v1beta.
+    // So we MUST strip '/v1' and '/v1beta'.
+    
     if (cleaned.endsWith('/v1beta')) {
         cleaned = cleaned.substring(0, cleaned.length - 7);
     } else if (cleaned.endsWith('/v1')) {
@@ -40,14 +45,14 @@ const cleanApiKey = (key: string): string => {
 const formatError = (error: any, context: string): string => {
   let msg = error instanceof Error ? error.message : String(error);
   
-  if (msg.includes('400')) msg = '请求无效 (400) - 请检查 API Key 是否正确，或代理地址是否支持该模型';
+  if (msg.includes('400')) msg = '请求无效 (400) - 可能是该代理地址不支持当前模型(如2.5系列)，请尝试切换模型';
   else if (msg.includes('401')) msg = 'API Key 无效或未授权 (401) - 请检查余额或 Key 是否正确';
   else if (msg.includes('403')) msg = 'API Key 权限不足 (403)';
-  else if (msg.includes('404')) msg = '地址错误 (404) - 请检查代理地址是否正确 (不要填 /v1beta)';
+  else if (msg.includes('404')) msg = '地址错误 (404) - 代理地址路径不匹配 (SDK会自动追加 /v1beta)';
   else if (msg.includes('429')) msg = '请求过于频繁/额度耗尽 (429)';
   else if (msg.includes('500')) msg = 'AI 服务内部错误 (500)';
   else if (msg.includes('503')) msg = '服务暂时不可用 (503)';
-  else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) msg = '网络连接失败 (检查网络/代理配置)';
+  else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) msg = '网络连接失败 (请检查代理地址/VPN/跨域设置)';
   
   return `${context}: ${msg}`;
 };
@@ -125,7 +130,7 @@ const executeGeminiCall = async <T>(
 /**
  * Test API Connection (Single Key + URL)
  */
-export const testApiConnection = async (apiKey: string, baseUrl: string, model: string = 'gemini-2.5-flash'): Promise<boolean> => {
+export const testApiConnection = async (apiKey: string, baseUrl: string, model: string = 'gemini-1.5-flash'): Promise<boolean> => {
   const cleanKey = cleanApiKey(apiKey);
   const cleanUrl = cleanBaseUrl(baseUrl);
   

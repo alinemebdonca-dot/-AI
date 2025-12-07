@@ -63,12 +63,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
     const cleanUrl = localSettings.baseUrl?.trim().replace(/\/+$/, '') || 'https://api.xxapi.xyz';
     const cleanKey = localSettings.apiKey.trim().replace(/[\s\uFEFF\xA0]+/g, '');
     
-    const modelToTest = localSettings.textModel || 'gemini-2.5-flash';
+    // FORCE USE a model from the allowed list for testing connectivity.
+    // gemini-2.5-flash is fast, cheap, and in the user's allowed list.
+    const modelToTest = 'gemini-2.5-flash';
 
     try {
         await testApiConnection(cleanKey, cleanUrl, modelToTest);
         setKeyStatus('valid');
-        showToast(`连接成功 (模型: ${modelToTest})`, "success");
+        showToast(`连接成功 (使用 ${modelToTest} 测试)`, "success");
     } catch (e: any) {
         setKeyStatus('invalid');
         showToast(`测试失败: ${e.message}`, "error");
