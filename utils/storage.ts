@@ -10,21 +10,15 @@ const KEYS = {
 };
 
 const DEFAULT_SETTINGS: Settings = {
-  // No pre-configured API Key. User must provide their own.
   apiKey: '', 
-  // Set default Base URL to user's New API proxy (LOCKED)
-  baseUrl: 'https://api.xxapi.xyz', 
-  // Default text model as requested
+  baseUrl: '', // Changed from official URL to empty string
   textModel: 'gemini-2.5-pro', 
   imageModel: GenerationModel.GEMINI_2_5_FLASH_IMAGE,
+  customTextModels: [],
   jianYingPath: 'C:/Users/Admin/AppData/Local/JianYingPro/User Data/Projects/',
   outputImgPath: 'D:/AI_Output/',
   themeColor: '#f97316'
 };
-
-// Simplified Storage - Pure LocalStorage for now since Auth is removed
-// The backend code exists but without Auth headers it won't work for per-user data isolation.
-// So we revert to LocalStorage to ensure the app works immediately.
 
 export const storage = {
   // --- Projects ---
@@ -81,19 +75,17 @@ export const storage = {
     const data = localStorage.getItem(KEYS.SETTINGS);
     const localSettings = data ? JSON.parse(data) : DEFAULT_SETTINGS;
     
-    // Migration: If old "apiKeys" array exists but no "apiKey" string, take the first one
-    if ((!localSettings.apiKey) && Array.isArray((localSettings as any).apiKeys) && (localSettings as any).apiKeys.length > 0) {
-        localSettings.apiKey = (localSettings as any).apiKeys[0];
-    }
-
-    // Clean up old field if exists (optional but cleaner)
+    // Cleanup old fields
     if ('apiKeys' in localSettings) {
         delete (localSettings as any).apiKeys;
     }
 
-    // FORCE LOCKED BASE URL
-    localSettings.baseUrl = 'https://api.xxapi.xyz';
+    // Ensure customTextModels exists
+    if (!localSettings.customTextModels) {
+        localSettings.customTextModels = [];
+    }
 
+    // NO LOCKING: Allow whatever is in storage or default
     return { ...DEFAULT_SETTINGS, ...localSettings };
   },
 
@@ -102,9 +94,7 @@ export const storage = {
   },
 
   saveSettings: async (settings: Settings) => {
-    // FORCE LOCKED BASE URL BEFORE SAVE
-    const lockedSettings = { ...settings, baseUrl: 'https://api.xxapi.xyz' };
-    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(lockedSettings));
+    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
   },
 
   // --- Auth ---

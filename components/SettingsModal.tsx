@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { Settings, GenerationModel, TEXT_MODELS } from '../types';
+import { Settings, GenerationModel, DEFAULT_TEXT_MODELS } from '../types';
 import { Button } from './Button';
-import { X, Save, Palette, Key, Check, AlertTriangle, Loader2, Globe, ShoppingBag, ExternalLink, Lock } from 'lucide-react';
+import { X, Save, Palette, Key, Check, AlertTriangle, Loader2, Globe, Plus, Trash2 } from 'lucide-react';
 import { storage } from '../utils/storage';
 import { testApiConnection } from '../services/geminiService';
 
@@ -21,22 +21,24 @@ const THEME_COLORS = [
   { name: '未来青', value: '#06b6d4' },
 ];
 
-const LOCKED_BASE_URL = 'https://api.xxapi.xyz';
-
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onSave, showToast }) => {
   const [localSettings, setLocalSettings] = useState<Settings>(storage.getSettings());
   const [testing, setTesting] = useState(false);
   const [keyStatus, setKeyStatus] = useState<'valid' | 'invalid' | null>(null);
+  
+  // Custom Model State
+  const [customModelInput, setCustomModelInput] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      setLocalSettings(storage.getSettings());
+      const current = storage.getSettings();
+      setLocalSettings(current);
       setKeyStatus(null);
     }
   }, [isOpen]);
 
   const handleSave = () => {
-    let finalKey = localSettings.apiKey.trim().replace(/[\s\uFEFF\xA0]+/g, '');
+    let finalKey = localSettings.apiKey.trim();
     
     if (!finalKey) {
         showToast("警告：未配置 API Key，功能将无法使用", "info");
@@ -45,9 +47,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
     const cleanedSettings = {
         ...localSettings,
         apiKey: finalKey,
-        baseUrl: LOCKED_BASE_URL // Force locked URL
     };
 
+    console.log('[Settings] Saving new settings, Key prefix:', finalKey.substring(0, 8));
     storage.saveSettings(cleanedSettings);
     onSave(cleanedSettings);
     onClose();
@@ -55,15 +57,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
 
   const handleTestKey = async () => {
     setTesting(true);
-    // Sanitize before testing
-    const cleanUrl = LOCKED_BASE_URL;
-    const cleanKey = localSettings.apiKey.trim().replace(/[\s\uFEFF\xA0]+/g, '');
+    const cleanUrl = localSettings.baseUrl.trim();
+    const cleanKey = localSettings.apiKey.trim();
     
     try {
-        // Auto-test: tries all available models until one works
-        const workingModel = await testApiConnection(cleanKey, cleanUrl);
+        // Prioritize testing the currently selected model
+        const priorityModels = [localSettings.textModel];
+        const workingModel = await testApiConnection(cleanKey, cleanUrl, priorityModels);
         setKeyStatus('valid');
-        showToast(`连接成功 (检测到可用模型: ${workingModel})`, "success");
+        showToast(`连接成功 (测试模型: ${workingModel})`, "success");
     } catch (e: any) {
         setKeyStatus('invalid');
         showToast(`测试失败: ${e.message}`, "error");
@@ -72,8 +74,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
     }
   };
 
-  const handleGoToRecharge = () => {
-      window.open(LOCKED_BASE_URL, '_blank');
+  const handleAddCustomModel = () => {
+      const val = customModelInput.trim();
+      if (!val) return;
+      
+      const existing = (localSettings.customTextModels || []);
+      if (existing.some(m => m.value === val) || DEFAULT_TEXT_MODELS.some(m => m.value === val)) {
+          showToast('该模型已存在', 'info');
+          return;
+      }
+
+      const newModels = [...existing, { value: val, label: val }];
+      setLocalSettings({
+          ...localSettings,
+          customTextModels: newModels,
+          textModel: val // Select automatically
+      });
+      setCustomModelInput('');
+      showToast(`已添加模型: ${val}`, 'success');
+  };
+
+  const handleRemoveCustomModel = (val: string) => {
+      const newModels = (localSettings.customTextModels || []).filter(m => m.value !== val);
+      let newSelected = localSettings.textModel;
+      
+      // If deleted active model, revert to default
+      if (localSettings.textModel === val) {
+          newSelected = DEFAULT_TEXT_MODELS[0].value;
+      }
+
+      setLocalSettings({
+          ...localSettings,
+          customTextModels: newModels,
+          textModel: newSelected
+      });
   };
 
   if (!isOpen) return null;
@@ -94,46 +128,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
                 <Key size={18} className="text-[var(--brand-color)]" /> API 连接配置
             </h4>
 
-            {/* Base URL Input (LOCKED) */}
+            {/* Base URL Input (UNLOCKED) */}
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
                     <Globe size={14} />
-                    API 接口地址 
-                    <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded ml-2 flex items-center gap-1 font-normal border border-gray-200">
-                        <Lock size={10}/> 已锁定
-                    </span>
+                    API 接口地址 (Base URL)
                 </label>
                 <div className="relative">
                     <input 
                         type="text" 
-                        value={LOCKED_BASE_URL}
-                        disabled
-                        readOnly
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 font-mono text-sm cursor-not-allowed select-none focus:outline-none"
+                        value={localSettings.baseUrl}
+                        onChange={(e) => setLocalSettings({...localSettings, baseUrl: e.target.value})}
+                        placeholder="请输入代理地址 (例如: https://api.openai-proxy.com)"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-700 font-mono text-sm focus:ring-2 focus:ring-[var(--brand-color)] outline-none"
                     />
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1">
-                    系统内置专属高速通道：<b>{LOCKED_BASE_URL}</b> (不可修改)
+                    如使用中转/代理，请输入完整地址。留空则尝试默认连接。
                 </p>
             </div>
             
             {/* API Key Input */}
             <div className="space-y-2">
-                 <div className="flex justify-between items-center">
-                     <label className="block text-sm font-medium text-gray-700">API Key (密钥)</label>
-                     <button 
-                        onClick={handleGoToRecharge}
-                        className="text-xs text-[var(--brand-color)] hover:underline flex items-center gap-1 font-bold"
-                     >
-                         <ShoppingBag size={12} />
-                         前往购买/充值 Key
-                     </button>
-                 </div>
+                 <label className="block text-sm font-medium text-gray-700">API Key (密钥)</label>
                  
                  <div className="flex gap-2">
                      <div className="relative flex-1">
                         <input 
                             type="password"
+                            autoComplete="new-password" 
+                            name="gemini_api_key_field"
                             value={localSettings.apiKey}
                             onChange={e => {
                                 setLocalSettings({...localSettings, apiKey: e.target.value});
@@ -156,24 +180,78 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
                         variant="secondary" 
                         className="whitespace-nowrap"
                      >
-                         {testing ? <Loader2 size={16} className="animate-spin mr-1"/> : "测试连接 (自动寻优)"}
+                         {testing ? <Loader2 size={16} className="animate-spin mr-1"/> : "测试连接"}
                      </Button>
                  </div>
                  <p className="text-[10px] text-gray-400">
-                     请确保您的 Key 有足够的余额。系统将自动尝试连接列表中的所有模型，直到成功。
+                     请确保 API Key 与上方代理地址匹配。系统会自动尝试使用 role: user 进行兼容性修复。
                  </p>
+            </div>
+          </div>
 
-                 {/* Big Recharge Button */}
-                 <div className="pt-2">
-                     <Button 
-                        onClick={handleGoToRecharge} 
-                        className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 border-none shadow-orange-500/20 py-3"
-                     >
-                         <ShoppingBag size={18} className="mr-2" />
-                         获取 / 充值 API Key
-                         <ExternalLink size={14} className="ml-2 opacity-70" />
-                     </Button>
-                 </div>
+          {/* Models */}
+          <div className="space-y-4 border-b border-gray-100 pb-6">
+            <h4 className="font-semibold text-gray-900">模型选择</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Text Model Selection */}
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">推理/文本模型</label>
+                    <div className="flex gap-2">
+                        <select 
+                            value={localSettings.textModel}
+                            onChange={e => setLocalSettings({...localSettings, textModel: e.target.value})}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                        >
+                            <optgroup label="预设模型">
+                                {DEFAULT_TEXT_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                            </optgroup>
+                            {(localSettings.customTextModels && localSettings.customTextModels.length > 0) && (
+                                <optgroup label="自定义模型">
+                                    {localSettings.customTextModels.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                                </optgroup>
+                            )}
+                        </select>
+                        {(localSettings.customTextModels || []).some(m => m.value === localSettings.textModel) && (
+                            <button 
+                                onClick={() => handleRemoveCustomModel(localSettings.textModel)}
+                                className="p-2 text-red-500 hover:bg-red-50 rounded border border-red-200"
+                                title="删除当前自定义模型"
+                            >
+                                <Trash2 size={16} />
+                            </button>
+                        )}
+                    </div>
+                    
+                    {/* Add Custom Model Input */}
+                    <div className="flex gap-2 items-center mt-2">
+                        <input 
+                            type="text" 
+                            value={customModelInput}
+                            onChange={e => setCustomModelInput(e.target.value)}
+                            placeholder="输入自定义模型ID..."
+                            className="flex-1 px-3 py-1.5 border border-gray-300 rounded text-xs"
+                        />
+                        <Button size="sm" variant="secondary" onClick={handleAddCustomModel} disabled={!customModelInput}>
+                            <Plus size={14} className="mr-1" /> 添加
+                        </Button>
+                    </div>
+                    <p className="text-[10px] text-gray-400">
+                        如代理商使用了特殊模型名称 (如 gpt-4o 映射)，请在此添加并选中。
+                    </p>
+                </div>
+
+                {/* Image Model Selection */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">生图模型</label>
+                    <select 
+                        value={localSettings.imageModel}
+                        onChange={e => setLocalSettings({...localSettings, imageModel: e.target.value as GenerationModel})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    >
+                        <option value={GenerationModel.GEMINI_2_5_FLASH_IMAGE}>NanoBanana (Standard)</option>
+                        <option value={GenerationModel.GEMINI_3_PRO_IMAGE_PREVIEW}>NanoBanana Pro (HD)</option>
+                    </select>
+                </div>
             </div>
           </div>
 
@@ -191,34 +269,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
                         style={{ backgroundColor: color.value }}
                     />
                 ))}
-            </div>
-          </div>
-
-          {/* Models */}
-          <div className="space-y-4 border-b border-gray-100 pb-6">
-            <h4 className="font-semibold text-gray-900">模型选择</h4>
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">推理/文本模型</label>
-                    <select 
-                        value={localSettings.textModel}
-                        onChange={e => setLocalSettings({...localSettings, textModel: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    >
-                        {TEXT_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">生图模型</label>
-                    <select 
-                        value={localSettings.imageModel}
-                        onChange={e => setLocalSettings({...localSettings, imageModel: e.target.value as GenerationModel})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    >
-                        <option value={GenerationModel.GEMINI_2_5_FLASH_IMAGE}>NanoBanana</option>
-                        <option value={GenerationModel.GEMINI_3_PRO_IMAGE_PREVIEW}>NanoBanana Pro</option>
-                    </select>
-                </div>
             </div>
           </div>
 

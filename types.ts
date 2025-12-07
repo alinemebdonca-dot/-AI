@@ -6,8 +6,8 @@ export enum GenerationModel {
   GEMINI_3_PRO_IMAGE_PREVIEW = 'gemini-3-pro-image-preview',
 }
 
-// Strictly requested model list
-export const TEXT_MODELS = [
+// Default models provided by the system
+export const DEFAULT_TEXT_MODELS = [
   { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' },
   { value: 'gemini-3-pro-preview', label: 'gemini-3-pro-preview' },
   { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro' },
@@ -19,6 +19,8 @@ export interface Settings {
   baseUrl: string;
   textModel: string;
   imageModel: GenerationModel;
+  // New field for user-defined models
+  customTextModels?: { value: string; label: string }[];
   jianYingPath: string;
   outputImgPath: string;
   themeColor: string;

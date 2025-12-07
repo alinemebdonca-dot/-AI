@@ -1,26 +1,27 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { GenerationModel, Settings, Character, TEXT_MODELS } from "../types";
+import { GenerationModel, Settings, Character, DEFAULT_TEXT_MODELS } from "../types";
 
 // Helper to clean Base URL for New API / One API compatibility
 const cleanBaseUrl = (url?: string): string | undefined => {
     if (!url || !url.trim()) return undefined; 
     
     let cleaned = url.trim();
-    
-    // 1. Remove trailing slashes
+    // Remove trailing slashes
     cleaned = cleaned.replace(/\/+$/, '');
     
-    // 2. Handle version suffixes strictly
-    // SDK adds /v1beta automatically. We must strip common user-pasted suffixes.
+    // SDK adds /v1beta automatically. We must strip common user-pasted suffixes to avoid duplication.
+    // e.g. https://api.xxapi.xyz/v1beta -> https://api.xxapi.xyz
     if (cleaned.endsWith('/v1beta')) {
         cleaned = cleaned.substring(0, cleaned.length - 7);
     } else if (cleaned.endsWith('/v1')) {
+        // Some proxies use /v1 as root for openai but /v1beta for google. 
+        // We strip /v1 to let SDK append /v1beta.
         cleaned = cleaned.substring(0, cleaned.length - 3);
     }
     
     cleaned = cleaned.replace(/\/+$/, '');
-
+    
     // Official API check
     if (cleaned === 'https://generativelanguage.googleapis.com') return undefined;
     
@@ -30,17 +31,19 @@ const cleanBaseUrl = (url?: string): string | undefined => {
 // Helper to clean API Key
 const cleanApiKey = (key: string): string => {
     if (!key) return "";
-    return key.replace(/[\s\uFEFF\xA0]+/g, '').replace(/^Bearer\s+/i, '');
+    // Simplified cleaning: Trim only. Avoid over-aggressive regex that might kill valid chars.
+    // User input should be trusted after trim.
+    return key.trim(); 
 };
 
 // Helper to format error messages
 const formatError = (error: any, context: string): string => {
   let msg = error instanceof Error ? error.message : String(error);
   
-  if (msg.includes('400')) msg = '请求无效 (400) - 代理地址不支持当前模型，或请求格式不兼容 (已尝试自动修复)';
+  if (msg.includes('400')) msg = '请求无效 (400) - 代理不支持此模型名，或需要 role:user 字段 (已尝试修复)';
   else if (msg.includes('401')) msg = 'API Key 无效或未授权 (401) - 请检查余额或 Key 是否正确';
   else if (msg.includes('403')) msg = 'API Key 权限不足 (403)';
-  else if (msg.includes('404')) msg = '地址错误 (404) - 代理地址路径不匹配 (SDK会自动追加 /v1beta)';
+  else if (msg.includes('404')) msg = '地址错误 (404) - 代理地址路径不匹配';
   else if (msg.includes('429')) msg = '请求过于频繁/额度耗尽 (429)';
   else if (msg.includes('500')) msg = 'AI 服务内部错误 (500)';
   else if (msg.includes('503')) msg = '服务暂时不可用 (503)';
@@ -82,6 +85,29 @@ const retryOperation = async <T>(
 };
 
 /**
+ * Creates a configured GoogleGenAI client with OpenAI-compatible headers
+ */
+const createClient = (apiKey: string, baseUrl?: string) => {
+    const clientOptions: any = { 
+        apiKey: apiKey,
+        apiVersion: 'v1beta', // Stable version for most features
+        requestOptions: {
+            customHeaders: {
+                // CRITICAL: Inject Bearer token for OpenAI-compatible proxies (New API, One API)
+                // These proxies often ignore x-goog-api-key and require Authorization header
+                'Authorization': `Bearer ${apiKey}`
+            }
+        }
+    };
+    
+    if (baseUrl) {
+        clientOptions.baseUrl = baseUrl;
+    }
+
+    return new GoogleGenAI(clientOptions);
+};
+
+/**
  * Execute an API operation
  */
 const executeGeminiCall = async <T>(
@@ -90,21 +116,23 @@ const executeGeminiCall = async <T>(
     contextName: string
 ): Promise<T> => {
     const key = cleanApiKey(settings.apiKey);
+    
+    // Debug Log: Check what key is actually being used
+    if (key) {
+        // Log masked key for security but enough to verify
+        const masked = key.length > 8 ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : key;
+        console.log(`[GeminiService] Executing Call with Key: ${masked}`);
+    } else {
+        console.error('[GeminiService] No API Key provided!');
+    }
+
     if (!key) throw new Error("未配置 API Key");
 
     const baseUrl = cleanBaseUrl(settings.baseUrl);
+    if(baseUrl) console.log(`[GeminiService] Using BaseURL: ${baseUrl}`);
 
     try {
-        const clientOptions: any = { 
-            apiKey: key,
-            apiVersion: 'v1beta' // Explicitly set version to stabilize proxy requests
-        };
-        
-        if (baseUrl) {
-            clientOptions.baseUrl = baseUrl;
-        }
-
-        const ai = new GoogleGenAI(clientOptions);
+        const ai = createClient(key, baseUrl);
         return await retryOperation(() => operation(ai));
 
     } catch (error: any) {
@@ -116,44 +144,55 @@ const executeGeminiCall = async <T>(
 
 /**
  * Test API Connection
- * NOW USES ARRAY FORMAT FOR CONTENTS TO FIX 400 ERRORS ON PROXIES
+ * @param priorityModels Optional models to try first (e.g. custom user model)
  */
-export const testApiConnection = async (apiKey: string, baseUrl: string): Promise<string> => {
+export const testApiConnection = async (
+    apiKey: string, 
+    baseUrl: string, 
+    priorityModels: string[] = []
+): Promise<string> => {
   const cleanKey = cleanApiKey(apiKey);
   const cleanUrl = cleanBaseUrl(baseUrl);
   
   if (!cleanKey) throw new Error("API Key 为空");
   
-  const clientOptions: any = { 
-      apiKey: cleanKey,
-      apiVersion: 'v1beta' 
-  };
-  if (cleanUrl) {
-      clientOptions.baseUrl = cleanUrl;
-  }
+  // EXPLICIT LOGGING FOR USER DEBUGGING
+  const maskedKey = cleanKey.length > 8 ? `${cleanKey.substring(0, 6)}...${cleanKey.substring(cleanKey.length - 4)}` : cleanKey;
+  console.log(`%c[GeminiService] TEST START`, 'background: #222; color: #bada55');
+  console.log(`> Key: ${maskedKey}`);
+  console.log(`> URL: ${cleanUrl || 'OFFICIAL (Default)'}`);
   
-  const ai = new GoogleGenAI(clientOptions);
-  const modelsToTry = TEXT_MODELS.map(m => m.value);
+  // Use the helper to ensure headers are consistent
+  const ai = createClient(cleanKey, cleanUrl);
+  
+  // Try priority models first, then default models
+  const defaultModelValues = DEFAULT_TEXT_MODELS.map(m => m.value);
+  const modelsToTry = [...new Set([...priorityModels, ...defaultModelValues])]; // Dedup
   
   let lastError: any = null;
 
   for (const modelName of modelsToTry) {
+      if(!modelName) continue;
       try {
-          console.log(`Testing connection with model: ${modelName}...`);
-          // Force content to be an array of objects. New API proxies prefer this.
+          console.log(`> Attempting model: ${modelName}...`);
+          // FIX 400 ERROR: Explicitly add role: 'user' for proxy compatibility
           await ai.models.generateContent({
             model: modelName,
-            contents: [{ parts: [{ text: 'Ping' }] }]
+            contents: [{ 
+                role: 'user', 
+                parts: [{ text: 'Ping' }] 
+            }]
           });
-          console.log(`Connection successful with ${modelName}`);
+          console.log(`%c> SUCCESS with ${modelName}`, 'color: green; font-weight: bold');
           return modelName; 
       } catch (error) {
-          console.warn(`Failed to connect using ${modelName}:`, error);
+          console.warn(`> Failed model ${modelName}:`, error);
           lastError = error;
       }
   }
   
   const msg = formatError(lastError, "所有模型连接测试均失败");
+  console.error(msg);
   throw new Error(msg);
 };
 
@@ -202,10 +241,13 @@ export const generateImage = async (
     systemText += `【Description】: ${prompt}`;
     parts.push({ text: systemText });
 
-    // Use Array format for contents
+    // FIX 400 ERROR: Explicitly add role: 'user'
     const response = await ai.models.generateContent({
         model: model,
-        contents: [{ parts: parts }],
+        contents: [{ 
+            role: 'user', 
+            parts: parts 
+        }],
         config: {
             imageConfig: { aspectRatio: aspectRatio },
         },
@@ -241,10 +283,13 @@ export const analyzeRoles = async (script: string, settings: Settings): Promise<
   剧本: ${safeScript}`;
 
   const operation = async (ai: GoogleGenAI) => {
-      // Use Array format for contents
+      // FIX 400 ERROR: Explicitly add role: 'user'
       const response = await ai.models.generateContent({
           model: settings.textModel,
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ 
+              role: 'user', 
+              parts: [{ text: prompt }] 
+          }],
           config: { responseMimeType: 'application/json' }
       });
       let text = response.text || "[]";
@@ -295,10 +340,13 @@ export const inferBatchPrompts = async (
     `;
 
     const operation = async (ai: GoogleGenAI) => {
-        // Use Array format for contents
+        // FIX 400 ERROR: Explicitly add role: 'user'
         const response = await ai.models.generateContent({
             model: settings.textModel,
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ 
+                role: 'user', 
+                parts: [{ text: prompt }] 
+            }],
             config: { responseMimeType: 'application/json' }
         });
         let text = response.text || "[]";
@@ -351,10 +399,13 @@ export const inferFrameData = async (
   输出 JSON: {"activeCharacterNames":[], "prompt":"..."}`;
 
   const operation = async (ai: GoogleGenAI) => {
-      // Use Array format for contents
+      // FIX 400 ERROR: Explicitly add role: 'user'
       const response = await ai.models.generateContent({
           model: settings.textModel,
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ 
+              role: 'user', 
+              parts: [{ text: prompt }] 
+          }],
           config: { responseMimeType: 'application/json' }
       });
       let text = response.text || "{}";
@@ -378,10 +429,13 @@ export const breakdownScript = async (scriptText: string, settings: Settings): P
   文本：${scriptText}`;
 
   const operation = async (ai: GoogleGenAI) => {
-      // Use Array format for contents
+      // FIX 400 ERROR: Explicitly add role: 'user'
       const response = await ai.models.generateContent({
           model: settings.textModel,
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ 
+              role: 'user', 
+              parts: [{ text: prompt }] 
+          }],
           config: { responseMimeType: 'application/json' }
       });
       let text = response.text || "[]";
